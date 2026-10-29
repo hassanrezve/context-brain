@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# In-repo mode: a commit that changes source files must also change a brain file.
+# Bypass: git commit --no-verify
+
+# Edit for your project's layout: paths whose changes should usually teach the brain something.
+SOURCE_PATTERN='^(src|app|lib|database|config|tests)/'
+
+REPO_DIR="$(git rev-parse --show-toplevel)"
+BRAIN_REL="${BRAIN_DIR#"$REPO_DIR"/}"
+
+staged=$(git -C "$REPO_DIR" diff --cached --name-only)
+changed_source=$(printf '%s\n' "$staged" | grep -v "^$BRAIN_REL/" | grep -E "$SOURCE_PATTERN")
+[ -z "$changed_source" ] && exit 0
+printf '%s\n' "$staged" | grep -q "^$BRAIN_REL/" && exit 0
+
+echo ""
+echo "Brain check: this commit changes source files but no file under $BRAIN_REL/:"
+echo ""
+echo "$changed_source" | sed 's/^/  /'
+echo ""
+echo "If this change taught you something, made a decision, fixed a documented bug or changed a"
+echo "verified fact, update the brain file and stage it in this commit."
+echo "If it genuinely needs no documenting: git commit --no-verify"
+echo ""
+exit 1

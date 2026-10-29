@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Optional (install.sh --commit-rules): blocks AI attribution lines and multi-paragraph messages.
+# Bypass: git commit --no-verify
+
+# Windows often has a python3 that is only a Microsoft Store stub.
+PY=python3; "$PY" -c "" 2>/dev/null || PY=python
+
+"$PY" - "$1" "${2:-}" <<'PYEOF' || exit 1
+import re
+import sys
+
+msg_path = sys.argv[1]
+source = sys.argv[2] if len(sys.argv) > 2 else ''
+
+with open(msg_path, encoding='utf-8') as fh:
+    raw = fh.read()
+
+# Drop the `git commit -v` diff below the scissors line, then every comment line.
+raw = re.split(r'^# -+ >8 -+$', raw, flags=re.MULTILINE)[0]
+text = '\n'.join(l for l in raw.split('\n') if not l.startswith('#')).strip()
+
+errors = []
+
+# Rule 1: no AI attribution. Matches attribution SHAPES, so a message can still name .claude/ paths.
+ATTRIBUTION = [
+    r'Co-Authored-By:\s*Claude',
+    r'Co-Authored-By:\s*.*<noreply@anthropic\.com>',
+    r'Generated with \[?Claude Code',
+    r'claude\.com/claude-code',
+    r'\U0001F916\s*Generated with',
+    r'Claude-Session:',
+    r'claude\.ai/code',
+]
+for pattern in ATTRIBUTION:
+    if re.search(pattern, text, re.IGNORECASE):
+        errors.append('AI attribution line found (pattern: %s)' % pattern)
+
+# Rule 2: one summary line; a single short body line is allowed. Git-generated messages are exempt.
+first = text.split('\n')[0] if text else ''
+generated = first.startswith(('Merge ', 'Revert ', 'fixup!', 'squash!', 'amend!'))
+if not generated and source != 'merge':
+    content = [l for l in text.split('\n') if l.strip()]
+    if len(content) > 2:
+        errors.append('%d non-blank lines - keep to one summary line (one short body line is OK)'
+                      % len(content))
+
+if not errors:
+    sys.exit(0)
+
+print('')
+print('Commit message check failed:')
+print('')
+for e in errors:
+    print('  - %s' % e)
+print('')
+print('Bypass with: git commit --no-verify')
+print('')
+sys.exit(1)
+PYEOF

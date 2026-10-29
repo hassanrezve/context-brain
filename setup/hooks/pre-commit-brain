@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Enforces the brain's own structural rules on the files this commit stages.
+# Scoped to staged files only - pre-existing issues elsewhere never block unrelated work.
+# Full rules: rules/brain-maintenance/overview.md. Bypass: git commit --no-verify
+
+# Separate brain repo: the brain is the repo. In-repo mode: the project's hook sets BRAIN_DIR.
+REPO_DIR="$(git rev-parse --show-toplevel)"
+BRAIN_DIR="${BRAIN_DIR:-$REPO_DIR}"
+
+# Windows often has a python3 that is only a Microsoft Store stub.
+PY=python3; "$PY" -c "" 2>/dev/null || PY=python
+
+"$PY" - "$REPO_DIR" "$BRAIN_DIR" <<'PYEOF' || exit 1
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+REPO, BRAIN = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
+REL = BRAIN.relative_to(REPO).as_posix() if BRAIN != REPO else ""
+# References are written from wherever the agent works: the project root.
+PREFIX = f"{REL}/" if REL else f"../{BRAIN.name}/"
+CATEGORIES = ("rules", "decisions", "standards", "patterns", "data-model", "testing",
+              "reference", "documentation")
+
+
+def git(*args):
+    return subprocess.run(["git", "-C", str(REPO), *args],
+                          capture_output=True, text=True).stdout
+
+
+def in_brain(paths):
+    """Brain files only, as paths relative to the brain folder."""
+    if not REL:
+        return paths
+    return [p[len(REL) + 1:] for p in paths if p.startswith(REL + "/")]
+
+
+def staged_path(f):
+    return f"{REL}/{f}" if REL else f
+
+
+staged = in_brain(git("diff", "--cached", "--name-only", "--diff-filter=ACM").splitlines())
+added = set(in_brain(git("diff", "--cached", "--name-only", "--diff-filter=A").splitlines()))
+text_files = [f for f in staged if f.endswith((".md", ".sh", ".py"))]
+
+index = git("show", f":{staged_path('CLAUDE.md')}")
+problems = []
+
+for f in text_files:
+    content = git("show", f":{staged_path(f)}")
+
+    # 1. Machine-specific absolute paths. <user> placeholders are intentionally not matched.
+    m = re.search(r"(/home/[A-Za-z0-9_-]+/|/Users/[A-Za-z0-9_-]+/|[A-Za-z]:\\Users\\[A-Za-z0-9_-]+)", content)
+    if m:
+        problems.append(f"{f}: hard-coded absolute path '{m.group(1)}' - derive it instead")
+
+    if not f.endswith(".md"):
+        continue
+
+    # 2. Cross-references that do not resolve. Templates containing <placeholders> are skipped.
+    for ref in re.findall(re.escape(PREFIX) + r"[A-Za-z0-9_/.<>-]*\.md", content):
+        if "<" in ref or ">" in ref:
+            continue
+        if not (BRAIN / ref[len(PREFIX):]).exists():
+            problems.append(f"{f}: dead cross-reference '{ref}'")
+
+    # 3. The append-only changelog shape this brain exists to avoid.
+    m = re.search(r"^#{1,6}\s*(Fixed|Added|Changed|Updated|New)\s+20\d{2}-\d{2}-\d{2}", content, re.M)
+    if m:
+        problems.append(f"{f}: dated changelog heading '{m.group(0).strip()}' - edit the existing "
+                        f"section in place instead")
+
+for f in added:
+    parts = f.split("/")
+    # 4. Topic files live in a folder, never as a bare category/topic.md.
+    if len(parts) == 2 and parts[0] in CATEGORIES and f.endswith(".md"):
+        problems.append(f"{f}: bare file in a category - move it to {parts[0]}/{parts[1][:-3]}/overview.md")
+    # 5. A brand-new topic has to be reachable from the index, or nobody will find it.
+    if len(parts) == 3 and parts[0] in CATEGORIES and parts[2] == "overview.md":
+        topic = f"{parts[0]}/{parts[1]}"
+        if topic not in index:
+            problems.append(f"{f}: new topic '{topic}' has no pointer in CLAUDE.md - add one")
+
+if not problems:
+    sys.exit(0)
+
+print("")
+print("Brain rules check failed on the files this commit stages:")
+print("")
+for p in problems:
+    print(f"  {p}")
+print("")
+print("Fix them, or bypass with: git commit --no-verify")
+print("")
+sys.exit(1)
+PYEOF
