@@ -34,7 +34,7 @@ agents:
 - **Agents stop starting from zero.** Each session begins with verified context.
 - **Bugs aren't paid for twice.** Postmortems keep the reasoning, so the same mistake doesn't
   come back.
-- **Proven in real team use.** Over 1,000 commits from 5 contributors.
+- **Proven in real team use.**
 
 ## Layout
 
