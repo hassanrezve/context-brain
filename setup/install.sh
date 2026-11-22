@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# Installs the brain: CLAUDE.md, git hooks, Claude Code settings. Safe to re-run.
+# Installs the brain: AGENTS.md and CLAUDE.md entry points, git hooks, Claude Code settings.
+# Safe to re-run: existing files are backed up, and anything already in place is skipped.
 #
-#   Separate repo, next to the project:   bash context-brain/setup/install.sh <project-folder>
-#   Inside the project repo:              bash brain/setup/install.sh
+#   Separate repo, next to the project:   bash context-brain/setup/install.sh <project-folder> [options]
+#   Inside the project repo:              bash brain/setup/install.sh [options]
 #
-# Add --commit-rules to also install the commit-msg hook and empty Claude Code's attribution.
+# Options. Flags only: with no terminal nothing prompts, so scripts, CI and cloud agents are safe.
+#   --commit-rules        also install the commit-msg hook and empty Claude Code's attribution setting
+#   --hooks-only          install only the git hooks and AGENTS.md; skip every Claude Code file
+#                         (CLAUDE.md, .claude/settings.local.json, ~/.claude/settings.json)
+#   --agents-md-primary   AGENTS.md holds the shared text and CLAUDE.md only imports it and the brain
+#                         index. Existing CLAUDE.md content moves into AGENTS.md (backup kept).
 #
 set -euo pipefail
 
@@ -14,12 +20,21 @@ PARENT_DIR="$(dirname "$BRAIN_DIR")"
 
 PROJECT=""
 COMMIT_RULES=""
+HOOKS_ONLY=0
+AGENTS_PRIMARY=0
 for arg in "$@"; do
     case "$arg" in
         --commit-rules) COMMIT_RULES=1 ;;
+        --hooks-only) HOOKS_ONLY=1 ;;
+        --agents-md-primary) AGENTS_PRIMARY=1 ;;
+        --*) printf 'error: unknown option %s\n' "$arg" >&2; exit 1 ;;
         *) PROJECT="$(basename "$arg")" ;;
     esac
 done
+if [ "$HOOKS_ONLY" = 1 ] && [ "$AGENTS_PRIMARY" = 1 ]; then
+    printf 'error: --agents-md-primary edits CLAUDE.md, which --hooks-only leaves alone\n' >&2
+    exit 1
+fi
 
 ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
 skip() { printf '  \033[33mskip\033[0m  %s\n' "$1"; }
@@ -89,12 +104,12 @@ else
             if [ "$d" != "$BRAIN_NAME" ] && [ -d "$PARENT_DIR/$d/.git" ]; then CANDIDATES+=("$d"); fi
         done
         [ ${#CANDIDATES[@]} -gt 0 ] || die "no git repository next to the brain in $PARENT_DIR. Clone your project there, or put the brain inside it."
-        printf '\n  \033[2mThese are the git repositories next to the brain. The one you pick gets a CLAUDE.md\n'
-        printf '  that points the AI agent at this brain, plus the git hooks that keep the brain current.\033[0m\n'
+        printf '\n  \033[2mThese are the git repositories next to the brain. The one you pick gets an entry file\n'
+        printf '  that points the AI agents at this brain, plus the git hooks that keep the brain current.\033[0m\n'
         menu "Which project should this brain serve?" "${CANDIDATES[@]}"
         PROJECT="${CANDIDATES[$CHOICE]}"
     fi
-    [ -n "$PROJECT" ] || die "usage: bash $BRAIN_NAME/setup/install.sh <project-folder> [--commit-rules]
+    [ -n "$PROJECT" ] || die "usage: bash $BRAIN_NAME/setup/install.sh <project-folder> [--commit-rules] [--hooks-only] [--agents-md-primary]
 (or put the brain folder inside your project repo and run it with no project folder)"
     PROJECT_DIR="$PARENT_DIR/$PROJECT"
     [ -d "$PROJECT_DIR" ] || die "No '$PROJECT' folder next to the brain. The two must be siblings:
@@ -104,16 +119,25 @@ else
     [ -d "$BRAIN_DIR/.git" ]   || die "$BRAIN_DIR is not a git repository (git init it first)."
 fi
 
+# How the project's files refer to the brain: the folder inside the repo, or the sibling folder.
+if [ "$MODE" = in-repo ]; then BRAIN_REF="$REL"; else BRAIN_REF="../$BRAIN_NAME"; fi
+
 if [ -z "$COMMIT_RULES" ] && [ "$TUI" = 1 ]; then
     printf '\n  \033[2mOptional commit-message rules. When on, a commit is refused if its message:\n'
     printf '    - is longer than one summary line (one short extra line is fine), or\n'
     printf '    - carries AI attribution: the "Co-Authored-By: Claude" or "Generated with Claude Code"\n'
     printf '      lines that AI tools add to commits and PRs to credit themselves.\n'
-    printf '  Claude Code adds those lines by default, so "Yes" also turns that off in\n'
-    printf '  ~/.claude/settings.json (your settings for every project). Otherwise the two would\n'
-    printf '  fight and every commit Claude makes would be refused. Choose "No" to keep both as they are.\033[0m\n'
-    menu "Turn on the commit-message rules?" \
-        "No, leave commit messages alone" "Yes, enforce them (and stop Claude Code adding attribution)"
+    if [ "$HOOKS_ONLY" = 1 ]; then
+        printf '  Claude Code settings are left alone (--hooks-only).\033[0m\n'
+        menu "Turn on the commit-message rules?" \
+            "No, leave commit messages alone" "Yes, enforce them"
+    else
+        printf '  Claude Code adds those lines by default, so "Yes" also turns that off in\n'
+        printf '  ~/.claude/settings.json (your settings for every project). Otherwise the two would\n'
+        printf '  fight and every commit Claude makes would be refused. Choose "No" to keep both as they are.\033[0m\n'
+        menu "Turn on the commit-message rules?" \
+            "No, leave commit messages alone" "Yes, enforce them (and stop Claude Code adding attribution)"
+    fi
     COMMIT_RULES=$CHOICE
 fi
 COMMIT_RULES="${COMMIT_RULES:-0}"
@@ -124,6 +148,7 @@ if [ "$TUI" = 1 ]; then
     printf '\n  \033[1mReady to install\033[0m\n'
     printf '    brain     %s\n    mode      %s\n    project   %s\n    commit rules  %s\n' \
         "$BRAIN_DIR" "$WHERE" "$PROJECT_DIR" "$RULES"
+    if [ "$HOOKS_ONLY" = 1 ]; then printf '    claude code   skipped (--hooks-only)\n'; fi
     menu "Go ahead?" "Install" "Cancel"
     [ "$CHOICE" = 0 ] || { printf '\n  Cancelled. Nothing was changed.\n\n'; exit 0; }
 fi
@@ -138,11 +163,11 @@ ok "git and $(basename "$PY") present"
 if [ "$MODE" = separate ]; then ok "$PROJECT and $BRAIN_NAME are siblings"; else ok "brain is $REL/ inside the project repo"; fi
 echo ""
 
-# ------------------------------------------------------------------- CLAUDE.md
-echo "CLAUDE.md"
-LINK="$PROJECT_DIR/CLAUDE.md"
+# ------------------------------------------------------------------ brain paths
+# Paths in the brain are written from the project root, where every agent works. Brain-internal,
+# so it runs with --hooks-only too: Codex reads the same index as Claude Code.
+echo "brain paths"
 if [ "$MODE" = in-repo ]; then
-    # Paths in the brain are written from the project root, where the agent works.
     "$PY" - "$BRAIN_DIR" "$REL" <<'PYEOF'
 import pathlib, sys
 brain, rel = pathlib.Path(sys.argv[1]), sys.argv[2]
@@ -154,46 +179,144 @@ for f in brain.rglob("*.md"):
     for o in old:
         new = new.replace(o, f"{rel}/")
     if new != text:
-        f.write_text(new, encoding="utf-8", newline="\n")
+        with open(f, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(new)
         changed += 1
 print(f"  \033[32mok\033[0m    rewrote brain paths to {rel}/ in {changed} file(s)" if changed
       else f"  \033[33mskip\033[0m  brain paths already written as {rel}/")
 PYEOF
-    IMPORT="@$REL/CLAUDE.md"
-    if [ -f "$LINK" ] && grep -qxF "$IMPORT" "$LINK"; then
-        skip "CLAUDE.md already imports $REL/CLAUDE.md"
-    elif [ -f "$LINK" ]; then
-        cp "$LINK" "$LINK.backup.$(date +%Y%m%d%H%M%S)"
-        printf '\n%s\n' "$IMPORT" >> "$LINK"
-        ok "added '$IMPORT' to the existing CLAUDE.md (backup kept)"
-    else
-        printf '%s\n' "$IMPORT" > "$LINK"
-        ok "created CLAUDE.md importing $REL/CLAUDE.md"
-    fi
 else
-    TARGET="../$BRAIN_NAME/CLAUDE.md"
-    STUB="@$TARGET"
-    if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$TARGET" ]; then
-        skip "already linked -> $TARGET"
-    elif [ -f "$LINK" ] && [ ! -L "$LINK" ] && [ "$(cat "$LINK")" = "$STUB" ]; then
-        skip "already imports $TARGET"
-    else
-        if [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
-            mv "$LINK" "$LINK.backup.$(date +%Y%m%d%H%M%S)"
-            ok "backed up the existing CLAUDE.md"
-        fi
-        # Git Bash silently copies on a plain ln -s; nativestrict makes it a real link or a clear failure.
-        if MSYS=winsymlinks:nativestrict ln -sfn "$TARGET" "$LINK" 2>/dev/null && [ -L "$LINK" ]; then
-            ok "linked $PROJECT/CLAUDE.md -> $TARGET"
-        else
-            rm -f "$LINK"
-            printf '%s\n' "$STUB" > "$LINK"
-            ok "symlinks unavailable (Windows without Developer Mode): $PROJECT/CLAUDE.md imports $TARGET"
-        fi
-    fi
+    skip "separate repo: brain paths are already $BRAIN_REF/"
 fi
 [ -f "$BRAIN_DIR/CLAUDE.md" ] || die "the brain has no CLAUDE.md - check the folder layout."
 echo ""
+
+# --------------------------------------------- AGENTS.md (Codex and other agents)
+# Codex reads AGENTS.md at the repo root and ignores @imports, so the pointer is written as plain text.
+echo "AGENTS.md (Codex and other agents)"
+"$PY" - "$PROJECT_DIR" "$BRAIN_REF" "$AGENTS_PRIMARY" <<'PYEOF'
+import datetime, pathlib, sys
+
+project, ref, primary = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3] == "1"
+agents, claude = project / "AGENTS.md", project / "CLAUDE.md"
+imp = f"@{ref}/CLAUDE.md"
+BEGIN, END = "<!-- context-brain:begin -->", "<!-- context-brain:end -->"
+BLOCK = f"""{BEGIN}
+## Context brain
+
+This project keeps its verified context in a brain. Before a task, open its index, `{ref}/CLAUDE.md`,
+and read the topic files for the area you are touching. When you learn a verified fact, make a
+decision or fix a documented bug, write it back into the brain, following
+`{ref}/rules/brain-maintenance/overview.md`.
+{END}
+"""
+OK = "  \033[32mok\033[0m    %s"
+SKIP = "  \033[33mskip\033[0m  %s"
+
+
+def backup(path):
+    dst = path.with_name(path.name + ".backup." + datetime.datetime.now().strftime("%Y%m%d%H%M%S"))
+    dst.write_bytes(path.read_bytes())
+    return dst
+
+
+def write(path, text):
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+
+
+def join(a, b):
+    a = a.rstrip()
+    return (a + "\n\n" if a else "") + b
+
+
+# 1. CLAUDE.md, only with --agents-md-primary: AGENTS.md holds the text, CLAUDE.md just imports it.
+moved = ""
+claude_action = None
+if primary:
+    stub = ["@AGENTS.md", imp]
+    real_file = claude.is_file() and not claude.is_symlink()
+    if real_file and [l.strip() for l in claude.read_text(encoding="utf-8").splitlines() if l.strip()] == stub:
+        print(SKIP % "CLAUDE.md already imports AGENTS.md and the brain index")
+    else:
+        if claude.is_symlink():
+            claude.unlink()  # the link itself only: the brain index it pointed at is never copied
+            claude_action = "replaced the CLAUDE.md link"
+        elif real_file:
+            text = claude.read_text(encoding="utf-8")
+            moved = "\n".join(l for l in text.splitlines() if l.strip() != imp).strip()
+            backup_path = backup(claude)
+            claude.unlink()
+            claude_action = "moved the existing CLAUDE.md into AGENTS.md (backup: %s)" % backup_path.name
+        else:
+            claude_action = "created CLAUDE.md"
+
+# 2. AGENTS.md: keep what is there, add the marked block once.
+old_agents = agents.read_text(encoding="utf-8") if agents.is_file() else ""
+new_agents = old_agents
+if moved:
+    new_agents = join(new_agents, moved + "\n")
+if BEGIN not in new_agents:
+    new_agents = join(new_agents, BLOCK)
+if new_agents != old_agents:
+    if agents.is_file():
+        backup_path = backup(agents)
+        print(OK % "backed up AGENTS.md to %s" % backup_path.name)
+    write(agents, new_agents + ("" if new_agents.endswith("\n") else "\n"))
+    if old_agents:
+        print(OK % "added the brain pointer to AGENTS.md")
+    else:
+        print(OK % "created AGENTS.md with the brain pointer")
+else:
+    print(SKIP % "AGENTS.md already points at the brain")
+
+if claude_action:
+    if primary:
+        write(claude, "@AGENTS.md\n" + imp + "\n")
+    print(OK % ("%s; it now imports AGENTS.md and %s" % (claude_action, imp)))
+PYEOF
+echo ""
+
+# ------------------------------------------------------------------- CLAUDE.md
+if [ "$HOOKS_ONLY" = 0 ] && [ "$AGENTS_PRIMARY" = 0 ]; then
+    echo "CLAUDE.md"
+    LINK="$PROJECT_DIR/CLAUDE.md"
+    if [ "$MODE" = in-repo ]; then
+        IMPORT="@$REL/CLAUDE.md"
+        if [ -f "$LINK" ] && grep -qxF "$IMPORT" "$LINK"; then
+            skip "CLAUDE.md already imports $REL/CLAUDE.md"
+        elif [ -f "$LINK" ]; then
+            cp "$LINK" "$LINK.backup.$(date +%Y%m%d%H%M%S)"
+            printf '\n%s\n' "$IMPORT" >> "$LINK"
+            ok "added '$IMPORT' to the existing CLAUDE.md (backup kept)"
+        else
+            printf '%s\n' "$IMPORT" > "$LINK"
+            ok "created CLAUDE.md importing $REL/CLAUDE.md"
+        fi
+    else
+        TARGET="../$BRAIN_NAME/CLAUDE.md"
+        STUB="@$TARGET"
+        if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$TARGET" ]; then
+            skip "already linked -> $TARGET"
+        elif [ -f "$LINK" ] && [ ! -L "$LINK" ] && [ "$(cat "$LINK")" = "$STUB" ]; then
+            skip "already imports $TARGET"
+        else
+            if [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
+                mv "$LINK" "$LINK.backup.$(date +%Y%m%d%H%M%S)"
+                ok "backed up the existing CLAUDE.md"
+            fi
+            # Git Bash silently copies on a plain ln -s; nativestrict makes it a real link or a clear failure.
+            if MSYS=winsymlinks:nativestrict ln -sfn "$TARGET" "$LINK" 2>/dev/null && [ -L "$LINK" ]; then
+                ok "linked $PROJECT/CLAUDE.md -> $TARGET"
+            else
+                rm -f "$LINK"
+                printf '%s\n' "$STUB" > "$LINK"
+                ok "symlinks unavailable (Windows without Developer Mode): $PROJECT/CLAUDE.md imports $TARGET"
+            fi
+        fi
+    fi
+    echo ""
+fi
 
 # -------------------------------------------------------------------- git hooks
 echo "git hooks"
@@ -241,6 +364,7 @@ if [ "$COMMIT_RULES" -eq 1 ]; then
 fi
 echo ""
 
+if [ "$HOOKS_ONLY" = 0 ]; then
 # ------------------------------------------------------- Claude Code settings
 echo "Claude Code settings (.claude/settings.local.json)"
 mkdir -p "$PROJECT_DIR/.claude"
@@ -294,9 +418,10 @@ print("  \033[32mok\033[0m    " + ("brain on the agent's path, sync hooks, destr
                                  if mode == "separate" else "destructive-database guard"))
 PYEOF
 echo ""
+fi
 
 # ------------------------------------------- attribution (only with --commit-rules)
-if [ "$COMMIT_RULES" -eq 1 ]; then
+if [ "$COMMIT_RULES" -eq 1 ] && [ "$HOOKS_ONLY" = 0 ]; then
     echo "attribution setting (~/.claude/settings.json)"
     mkdir -p "$HOME/.claude"
     "$PY" - "$HOME/.claude/settings.json" <<'PYEOF'
@@ -324,16 +449,19 @@ PYEOF
 fi
 
 # ------------------------------------------------------------------ verification
-echo "verification"
-GUARD="$BRAIN_DIR/setup/hooks/block-destructive-db.py"
-printf '{"tool_input":{"command":"psql -c \\"drop database app\\""}}' | "$PY" "$GUARD" >/dev/null 2>&1 \
-    && die "DB guard did NOT block a destructive command." || ok "DB guard blocks destructive commands"
-printf '{"tool_input":{"command":"git status"}}' | "$PY" "$GUARD" >/dev/null 2>&1 \
-    && ok "DB guard allows normal commands" || die "DB guard wrongly blocked a safe command."
-echo ""
+if [ "$HOOKS_ONLY" = 0 ]; then
+    echo "verification"
+    GUARD="$BRAIN_DIR/setup/hooks/block-destructive-db.py"
+    printf '{"tool_input":{"command":"psql -c \\"drop database app\\""}}' | "$PY" "$GUARD" >/dev/null 2>&1 \
+        && die "DB guard did NOT block a destructive command." || ok "DB guard blocks destructive commands"
+    printf '{"tool_input":{"command":"git status"}}' | "$PY" "$GUARD" >/dev/null 2>&1 \
+        && ok "DB guard allows normal commands" || die "DB guard wrongly blocked a safe command."
+    echo ""
+fi
 
 INDEX="$BRAIN_NAME/CLAUDE.md"; [ "$MODE" = in-repo ] && INDEX="$REL/CLAUDE.md"
 cat <<DONE
 Done. Start here:
-  $INDEX     the index the agent reads (pointers only)
+  $INDEX     the index every agent reads (pointers only)
+  AGENTS.md  the entry point Codex and other agents read; it points at the index
 DONE

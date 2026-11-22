@@ -150,6 +150,37 @@ check "allows a source change with a brain change" 'echo "fact" > "$MONO/brain/r
 check "ignores non-source paths" 'mono_commit README.md "docs"'
 check "ignores a bare file outside the brain" 'mono_commit rules/loose.md "not the brain"'
 
+echo "AGENTS.md and the index"
+check "AGENTS.md points at the brain index (separate repo)" 'grep -q "context-brain:begin" "$APP/AGENTS.md" && grep -q "\.\./context-brain/CLAUDE.md" "$APP/AGENTS.md"'
+check "re-run adds one AGENTS.md block" '[ "$(grep -c "context-brain:begin" "$APP/AGENTS.md")" = 1 ]'
+check "AGENTS.md points at the index in-repo" 'grep -q "brain/CLAUDE.md" "$MONO/AGENTS.md"'
+check "index says the CLAUDE.md name is historical" 'grep -q "historical" "$BRAIN/CLAUDE.md"'
+check "index has no mode-specific wording" '! grep -q "next to" "$MONO/brain/CLAUDE.md" && ! grep -q "next to" "$BRAIN/CLAUDE.md"'
+
+LEG="$SANDBOX/legacy"; git init -q "$LEG"; printf '# Legacy agents\n' > "$LEG/AGENTS.md"
+check "keeps an existing AGENTS.md and appends the pointer (backup kept)" 'bash "$BRAIN/setup/install.sh" legacy >/dev/null 2>&1 && grep -qx "# Legacy agents" "$LEG/AGENTS.md" && [ "$(grep -c "context-brain:begin" "$LEG/AGENTS.md")" = 1 ] && ls "$LEG"/AGENTS.md.backup.* >/dev/null 2>&1'
+check "--agents-md-primary makes CLAUDE.md import AGENTS.md and the index" 'bash "$BRAIN/setup/install.sh" legacy --agents-md-primary >/dev/null 2>&1 && [ ! -L "$LEG/CLAUDE.md" ] && [ "$(cat "$LEG/CLAUDE.md")" = "$(printf "@AGENTS.md\n@../context-brain/CLAUDE.md")" ]'
+check "--agents-md-primary never copies the brain index into AGENTS.md" '! grep -q "Project Index" "$LEG/AGENTS.md" && grep -qx "# Legacy agents" "$LEG/AGENTS.md"'
+
+LEG3="$SANDBOX/legacy3"; git init -q "$LEG3"; printf '# Legacy rules\n' > "$LEG3/CLAUDE.md"
+check "--agents-md-primary moves an existing CLAUDE.md into AGENTS.md (backed up)" 'bash "$BRAIN/setup/install.sh" legacy3 --agents-md-primary >/dev/null 2>&1 && grep -qx "# Legacy rules" "$LEG3/AGENTS.md" && ls "$LEG3"/CLAUDE.md.backup.* >/dev/null 2>&1 && [ "$(cat "$LEG3/CLAUDE.md")" = "$(printf "@AGENTS.md\n@../context-brain/CLAUDE.md")" ]'
+check "--agents-md-primary re-run changes nothing" 'bash "$BRAIN/setup/install.sh" legacy3 --agents-md-primary >/dev/null 2>&1 && [ "$(grep -c "context-brain:begin" "$LEG3/AGENTS.md")" = 1 ] && [ "$(grep -c "# Legacy rules" "$LEG3/AGENTS.md")" = 1 ]'
+
+echo "hooks-only (cloud agents)"
+CLOUD="$SANDBOX/cloud"; git init -q "$CLOUD"; CHOME="$SANDBOX/cloud-home"; mkdir -p "$CHOME"
+check "--hooks-only installs the git hooks and AGENTS.md" 'HOME="$CHOME" bash "$BRAIN/setup/install.sh" cloud --hooks-only --commit-rules >/dev/null 2>&1 && [ -x "$CLOUD/.git/hooks/pre-commit" ] && [ -x "$CLOUD/.git/hooks/commit-msg" ] && grep -q "context-brain:begin" "$CLOUD/AGENTS.md"'
+check "--hooks-only writes no Claude Code files" '[ ! -e "$CLOUD/CLAUDE.md" ] && [ ! -e "$CLOUD/.claude" ] && [ ! -e "$CHOME/.claude" ]'
+check "--hooks-only re-run succeeds" 'HOME="$CHOME" bash "$BRAIN/setup/install.sh" cloud --hooks-only --commit-rules >/dev/null 2>&1'
+git init -q "$SANDBOX/cloud2"
+check "--hooks-only menus install the hooks and no Claude Code files" 'printf "\n\n" | CONTEXT_BRAIN_TUI=1 HOME="$CHOME" bash "$BRAIN/setup/install.sh" cloud2 --hooks-only >/dev/null 2>&1 && [ -x "$SANDBOX/cloud2/.git/hooks/pre-commit" ] && [ ! -e "$SANDBOX/cloud2/CLAUDE.md" ]'
+check "--hooks-only refuses --agents-md-primary" '! HOME="$CHOME" bash "$BRAIN/setup/install.sh" cloud --hooks-only --agents-md-primary >/dev/null 2>&1'
+check "unknown options are refused, not taken as a project name" 'out=$(bash "$BRAIN/setup/install.sh" cloud --bogus 2>&1); [ $? -ne 0 ] && printf "%s" "$out" | grep -q "unknown option"'
+
+MONO2="$SANDBOX/mono2"; mkdir -p "$MONO2/brain"
+(cd "$SRC" && tar --exclude=.git -cf - .) | (cd "$MONO2/brain" && tar -xf -)
+git -C "$MONO2" init -q && echo "a" > "$MONO2/a.txt" && git -C "$MONO2" add -A && git -C "$MONO2" commit -qm "Initial" --no-verify
+check "in-repo --hooks-only writes hooks and AGENTS.md, no Claude Code files" 'HOME="$CHOME" bash "$MONO2/brain/setup/install.sh" --hooks-only >/dev/null 2>&1 && [ -x "$MONO2/.git/hooks/pre-commit" ] && [ ! -e "$MONO2/.claude" ] && [ ! -e "$MONO2/CLAUDE.md" ] && grep -q "brain/CLAUDE.md" "$MONO2/AGENTS.md" && grep -q "brain/rules/brain-maintenance" "$MONO2/brain/CLAUDE.md"'
+
 echo "setup menus"
 MENUS="$SANDBOX/menus"
 mkdir -p "$MENUS/context-brain"

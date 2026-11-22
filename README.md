@@ -55,7 +55,8 @@ Every topic is `<category>/<topic>/overview.md`, with sibling files when a topic
 **current-state truth**, edited in place, never append-only changelogs. Git history answers "when
 did this change"; the file answers "what is true now."
 
-The topic files under `decisions/` to `reference/` are examples. Replace them with your own.
+The topic files under `decisions/` to `reference/` are examples. Replace them with your own; the
+steps are under [Replacing the example topics](#replacing-the-example-topics).
 
 ## Install
 
@@ -125,13 +126,46 @@ Works on Linux, macOS, WSL and native Windows. On Windows, run the commands abov
 | Installs | What it does |
 |---|---|
 | `my-app/CLAUDE.md` | relative symlink to the brain's index, so the agent loads it |
+| `my-app/AGENTS.md` | a marked pointer block to the index, for Codex and other agents |
 | brain `pre-commit` | blocks commits that break the brain's own rules (below) |
 | project `pre-commit` | stops a source commit when the brain has not been touched since the last one |
 | `my-app/.claude/settings.local.json` | puts the brain on the agent's path, adds the sync hooks and the destructive-database guard |
 
-Optional: `--commit-rules` also installs a `commit-msg` hook in both repos (one-line messages, no AI
-attribution lines) and empties Claude Code's `attribution` setting in `~/.claude/settings.json`, so
-the two don't fight. It is the only option that changes anything outside the two repos.
+### Options
+
+| Flag | What it does |
+|---|---|
+| `--commit-rules` | Installs the `commit-msg` hook in both repos (one-line messages, no AI attribution lines) and empties Claude Code's `attribution` setting in `~/.claude/settings.json`, so the two don't fight. It is the only option that changes anything outside the two repos. |
+| `--hooks-only` | Installs the git hooks and `AGENTS.md` and nothing Claude Code: no `CLAUDE.md`, no `.claude/settings.local.json`, no `~/.claude/settings.json`. For agents that are not Claude Code. |
+| `--agents-md-primary` | Makes `AGENTS.md` hold the shared instructions, with `CLAUDE.md` only importing `AGENTS.md` and the brain index. An existing `CLAUDE.md` has its content moved into `AGENTS.md`, backed up first. Without this flag nothing is moved. It cannot be combined with `--hooks-only`. |
+
+Any other `--` option is refused, so a typo can't become a project name. With no terminal the
+installer never prompts; the menus appear only when a person runs it in a terminal.
+
+### Codex and other agents (AGENTS.md)
+
+Codex reads `AGENTS.md` at the repo root and does not follow `@` imports. The installer therefore
+adds a marked block to `AGENTS.md` (creating the file if needed). The block tells the agent to open
+the brain index, read the topics for the area it touches, and write new facts back into the brain.
+Running the installer again finds the block and skips it. Claude Code still reads `CLAUDE.md`, so
+both tools reach the same index.
+
+With `--agents-md-primary` both tools read the same text: `AGENTS.md` holds the instructions, and
+`CLAUDE.md` contains only `@AGENTS.md` and the brain index import. Use it when you want one place to
+edit.
+
+### Cloud agents (Codex cloud and similar)
+
+Cloud agents clone one repository and have no Claude Code settings, so use the inside-the-repo
+layout and run this in the environment's setup script:
+
+```bash
+bash brain/setup/install.sh --hooks-only --commit-rules
+```
+
+It installs the pre-commit and commit-msg hooks and `AGENTS.md`, and skips every Claude Code file.
+Re-running it is safe. Without `--hooks-only`, the same command also writes Claude Code's files,
+which a cloud environment doesn't need.
 
 ## What the hooks enforce
 
@@ -145,6 +179,31 @@ the two don't fight. It is the only option that changes anything outside the two
 
 The brain checks look only at the files a commit stages, so an old problem elsewhere never blocks
 new work. Bypass any git hook with `git commit --no-verify`.
+
+## Deploying: keep the brain out of the build
+
+An in-repo brain is for development. It holds internal decisions, postmortems and the hook sources,
+so don't ship it. Exclude the brain folder wherever the code is copied:
+
+- rsync: `rsync -av --exclude=brain/ ./ server:/srv/my-app/`
+- scp action: `source: ".,!brain"`
+- Docker: add `brain/` to `.dockerignore`
+
+If a brain folder has already reached a server, remove it there: `rm -rf /srv/my-app/brain`.
+
+A separate-repo brain sits outside the project folder, so a deploy of the project never includes it.
+
+## Replacing the example topics
+
+The example topics under `decisions/`, `standards/`, `patterns/`, `data-model/`, `documentation/`,
+`testing/` and `reference/` are listed in `CLAUDE.md` after install. Replace each one like this:
+
+1. Delete the example folder, for example `decisions/example-decision/`.
+2. Delete its pointer line in `CLAUDE.md`.
+3. Add your own topic folder and its pointer line.
+
+Do the three steps in one commit. A pointer left behind leads nowhere, and the brain check refuses
+it the next time `CLAUDE.md` is staged.
 
 ## Verifying it still works
 

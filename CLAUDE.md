@@ -4,9 +4,11 @@ The entry point for AI agents in this project. Reference content (verified facts
 standards, bug postmortems) lives in topic files under `../context-brain/`. This page is a table of
 contents: open the linked file before working in that area, don't guess.
 
-The brain sits **next to** the project folder, not inside it. Every path below is written as
-`../context-brain/...` on purpose: that one form resolves from either repo root and holds no
-machine-specific home directory. Open paths exactly as written.
+Every path below is relative to the project root, where the agent works. Open paths exactly as
+written. They hold no machine-specific home directory, so they work on every machine.
+
+This index is for every AI agent, not only Claude Code. The file name `CLAUDE.md` is historical:
+Claude Code reads it automatically, and Codex and other agents reach it through `AGENTS.md`.
 
 **Never put content in this file.** Add a topic file, then a one-line pointer here.
 
